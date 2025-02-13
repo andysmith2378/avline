@@ -6,27 +6,27 @@ from skimage.color import rgb2gray, rgba2rgb
 from skimage.feature import canny
 from skimage.transform import probabilistic_hough_line
 
-ORIGINAL_IMAGE = "andy01.png"
+ORIGINAL_IMAGE = "final.png"
 STROKE_WIDTH = 1.25
 LINE_CAP = 'round'
-MAX_VARIANCE = 0.000005
+MAX_VARIANCE = 0.00001
 COLOUR_VARIATION = 5
-WIDTH_VARIATION = 0.3
+WIDTH_VARIATION = 0.5
 HOUGH_LINE_LENGTH = 40
 HOUGH_LINE_THRESHOLD = 10
 HOUGH_LINE_GAP = 10
 CANNY_DEVIATION = 2
 TOO_RECTANGLE = 20.0
 MAX_JUMP = 8
-FIRST_JUMP = 16
+FIRST_JUMP = 8
 MIN_FIRST_EDGE_DISP = 100
 MIN_STROKE_LENGTH = 0.02
 TOO_SHORT_IN_BATCH = 25
-MIN_TRIES_PER_ORDER = 10000
-MAX_TRIES_PER_ORDER_PER_ORDER = 40
+MIN_TRIES_PER_ORDER = 5000
+MAX_TRIES_PER_ORDER_PER_ORDER = 200
 MISSES_PER_BATCH = 32
-FIRST_MISSES = 512
-MAX_ORDER = 1000
+FIRST_MISSES = 128
+MAX_ORDER = 500
 
 def colourVariation(colour, amount):
     return [max(0, min(255, element + randint(0, amount) - randint(0, amount)))
@@ -53,7 +53,7 @@ def addLine(startrow, startcolumn, endrow, endcolumn):
     return False
 
 
-def addBatch(misses, p1, q1, p2, q2, lengthMinusOne, spanMinusOne, fine=None, jump=MAX_JUMP,
+def addBatch(current, numChannels, misses, p1, q1, p2, q2, lengthMinusOne, spanMinusOne, fine=None, jump=MAX_JUMP,
              lowsquare=TOO_SHORT_IN_BATCH):
     pOff, qOff = randint(-jump, jump), randint(-jump, jump)
     if fine is None:
@@ -66,7 +66,7 @@ def addBatch(misses, p1, q1, p2, q2, lengthMinusOne, spanMinusOne, fine=None, ju
     tq2 = max(0, min(lengthMinusOne, q2 + qOff + fine[3]))
     dp = tp2 - tp1
     dq = tq2 - tq1
-    if (dp * dp + dq * dq) > lowsquare and addLine(tp1, tq1, tp2, tq2):
+    if (numChannels < 4 or current[tp1, tq1, 3] > 0) and (dp * dp + dq * dq) > lowsquare and addLine(tp1, tq1, tp2, tq2):
         misses = 0
         p1, q1, p2, q2 = tp1, tq1, tp2, tq2
     else:
@@ -85,7 +85,11 @@ if __name__ == '__main__':
     originalImage.load()
     current = np.asarray(originalImage, dtype="int32")
     span, length, numChannels = current.shape
-    edges = canny(rgb2gray(rgba2rgb(originalImage)), sigma=CANNY_DEVIATION)
+    try:
+        greyscale = rgb2gray(rgba2rgb(originalImage))
+    except ValueError:
+        greyscale = rgb2gray(current)
+    edges = canny(greyscale, sigma=CANNY_DEVIATION)
     svgdrawing = svgwrite.Drawing(".".join([outbasename, "svg"]), size=(span, length))
     lengthMinusOne, spanMinusOne = length - 1, span - 1
     houghSquare = HOUGH_LINE_LENGTH * HOUGH_LINE_LENGTH
@@ -99,10 +103,11 @@ if __name__ == '__main__':
         abPdiff, abQdiff = abs(p2 - p1), abs(q2 - q1)
         if abPdiff > 0 and abQdiff > 0 and (max(abPdiff, abQdiff) /
                                             min(abPdiff, abQdiff)) < TOO_RECTANGLE:
-            while misses < FIRST_MISSES:
-                misses, p1, q1, p2, q2 = addBatch(misses, p1, q1, p2, q2, lengthMinusOne,
-                                                  spanMinusOne, (0, 0, 0, 0),
-                                                  FIRST_JUMP, houghSquare)
+            if numChannels < 4 or current[p1, q1, 3] > 0:
+                while misses < FIRST_MISSES:
+                    misses, p1, q1, p2, q2 = addBatch(current, numChannels, misses, p1, q1, p2, q2, lengthMinusOne,
+                                                      spanMinusOne, (0, 0, 0, 0),
+                                                      FIRST_JUMP, houghSquare)
     svgdrawing.save()
     if MAX_ORDER > 0:
         numberlength = 1 + math.ceil(math.log10(MAX_ORDER))
@@ -120,7 +125,7 @@ if __name__ == '__main__':
                         if addLine(p1, q1, p2, q2):
                             misses = 0
                             while misses < MISSES_PER_BATCH:
-                                misses, p1, q1, p2, q2 = addBatch(misses, p1, q1, p2, q2,
+                                misses, p1, q1, p2, q2 = addBatch(current, numChannels, misses, p1, q1, p2, q2,
                                                                   lengthMinusOne, spanMinusOne)
             svgdrawing.save()
             print(filename)
